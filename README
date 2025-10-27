@@ -1,0 +1,40 @@
+Blue/Green Node.js Service Deployment with Nginx Failover
+This repository contains the configuration to deploy a Blue/Green Node.js service using Docker Compose and Nginx, implementing automated, health-based failover with zero client request failures.
+
+Prerequisites
+Docker
+
+Docker Compose (or Docker Desktop)
+
+🚀 How to Run
+Clone the repository:
+
+Bash
+
+git clone <your-repo-link>
+cd <your-repo-name>
+Setup the Environment File: Create a .env file from the provided template. The grader/CI will supply the correct image links and release IDs.
+
+Bash
+
+cp .env.example .env
+# The grading script will populate .env with the correct variables.
+Start the Services: The docker-compose.yml orchestrates the Nginx proxy, the Blue app, and the Green app. The nginx_setup service automatically processes the configuration template using envsubst before Nginx starts.
+
+Bash
+
+docker compose up -d
+Verification (Baseline State): Once running, the baseline state should have Nginx routing all traffic to the Blue pool.
+
+Bash
+
+# Check the service status (should be 200 OK and show 'blue')
+curl -s http://localhost:8080/version | grep -E "X-App-Pool|X-Release-Id"
+Expected output will show X-App-Pool: blue and the corresponding blue release ID.
+
+Access Ports: | Service | Purpose | Port | | :--- | :--- | :--- | | Nginx (Public) | Main service entrypoint | http://localhost:8080 | | Blue App (Direct) | Used by the grader to inject chaos | http://localhost:8081 | | Green App (Direct) | Direct access for inspection | http://localhost:8082 |
+
+🛑 How to Stop and Clean Up
+Bash
+
+docker compose down

@@ -1,0 +1,6 @@
+# .gitignore content
+
+# Ignore local environment variables and secrets
+.env
+
+# node_modules

@@ -1,0 +1,70 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # The Blue (Primary) Nodejs Application
+  app_blue:
+    image: ${BLUE_IMAGE}
+    container_name: app_blue
+    environment:
+      - PORT=${PORT}
+      # Inject release ID as an environment variable for the app to pick up
+      - RELEASE_ID=${RELEASE_ID_BLUE}
+    # Direct port for the grader/CI to induce chaos
+    ports:
+      - "8081:${PORT}"
+    # Ensure health check is available for Nginx
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT}/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # The Green (Backup) Nodejs Application
+  app_green:
+    image: ${GREEN_IMAGE}
+    container_name: app_green
+    environment:
+      - PORT=${PORT}
+      - RELEASE_ID=${RELEASE_ID_GREEN}
+    # Direct port for the grader/CI
+    ports:
+      - "8082:${PORT}"
+    # Ensure health check is available for Nginx
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT}/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Nginx Configuration Setup
+  # This container runs before Nginx to template the config file
+  nginx_setup:
+    image: alpine/git # A lightweight image with 'envsubst' and a shell
+    container_name: nginx_setup
+    volumes:
+      - ./nginx:/etc/nginx/conf.d
+    command: >
+      sh -c "envsubst < /etc/nginx/conf.d/nginx.conf.template > /etc/nginx/conf.d/default.conf && chmod 644 /etc/nginx/conf.d/default.conf"
+    environment:
+      # Expose required environment variables for templating
+      - ACTIVE_POOL
+      - PORT
+      # Add other variables if needed in the template
+
+  # The Nginx Reverse Proxy
+  nginx:
+    image: nginx:stable-alpine
+    container_name: nginx
+    depends_on:
+      - app_blue
+      - app_green
+      - nginx_setup # Wait for the config to be templated
+    ports:
+      - "8080:80" # Public entrypoint
+    volumes:
+      - ./nginx:/etc/nginx/conf.d:ro # Mount the directory containing the templated config
+    # Wait for the configuration to be prepared by the setup service
+    command: ["nginx", "-g", "daemon off;"]

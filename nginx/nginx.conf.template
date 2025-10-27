@@ -1,0 +1,81 @@
+# nginx/nginx.conf.template
+#
+# Note: The $PORT variable will be substituted by envsubst with the app's internal port (e.g., 3000)
+
+server {
+    listen 80;
+
+    # Set strict, low timeouts for quick failure detection and client request time limit
+    # Client request must not be more than 10 seconds.
+    client_body_timeout 5s;
+    client_header_timeout 5s;
+    proxy_connect_timeout 1s; # Tight connection timeout
+    proxy_send_timeout 2s;
+    proxy_read_timeout 2s;    # Tight read timeout
+    send_timeout 5s;
+
+    # Nginx will look for the upstreams based on the ACTIVE_POOL variable.
+    # It dynamically configures which pool is the primary and which is the backup.
+    # The 'backup' keyword is used for the non-ACTIVE_POOL.
+    location / {
+        # General proxy settings
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Ensure Nginx forwards app headers (Do not strip upstream headers)
+        proxy_pass_request_headers on;
+        
+        # Disable buffering to potentially send headers/data earlier,
+        # but more importantly, to prevent header stripping (a common side effect of buffering)
+        proxy_buffering off; 
+
+        # --- Failover and Retry Policy ---
+        # Retry on timeout, connection/send/read errors, and HTTP 5xx responses
+        proxy_next_upstream timeout error http_500 http_502 http_503 http_504;
+        # Limits the number of times Nginx will try the next upstream server
+        proxy_next_upstream_tries 2; 
+
+        # Dynamically select the upstream based on the ACTIVE_POOL
+        if ($ENV_ACTIVE_POOL = blue) {
+            proxy_pass http://blue_pool;
+        }
+        if ($ENV_ACTIVE_POOL = green) {
+            proxy_pass http://green_pool;
+        }
+
+        # Catch-all if ACTIVE_POOL is unset or invalid (shouldn't happen with CI setup)
+        if ($proxy_host = "") {
+            return 503;
+        }
+    }
+}
+
+# Variable to hold the ACTIVE_POOL value from the environment
+# This is a necessity because Nginx 'if' blocks cannot directly reference environment variables
+# This will be substituted by envsubst (e.g., set $ENV_ACTIVE_POOL blue;)
+set $ENV_ACTIVE_POOL "${ACTIVE_POOL}";
+
+
+# --- Upstreams Configuration ---
+
+# Blue Pool (Default Primary)
+upstream blue_pool {
+    # Blue is Primary by default. Very aggressive failure detection:
+    # 1 fail in 1 second (fail_timeout) marks it down.
+    # Nginx also uses 'healthz' liveness check (not explicit in this block, but used by proxy_next_upstream).
+    server app_blue:${PORT} max_fails=1 fail_timeout=1s;
+    
+    # Green is the backup pool in this configuration
+    server app_green:${PORT} backup;
+}
+
+# Green Pool (Default Backup)
+upstream green_pool {
+    # Green is Primary only when ACTIVE_POOL=green is set (during a Blue->Green switch)
+    server app_green:${PORT} max_fails=1 fail_timeout=1s;
+    
+    # Blue is the backup pool in this configuration
+    server app_blue:${PORT} backup;
+}
